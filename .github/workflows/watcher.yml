@@ -33,7 +33,7 @@ jobs:
 
       - name: Commit updated snapshot
         run: |
-          if git diff --quiet -- acem_snapshot.json; then
+          if [ -z "$(git status --porcelain -- acem_snapshot.json)" ]; then
             echo "No snapshot changes to commit."
             exit 0
           fi
