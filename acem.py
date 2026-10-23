@@ -7,11 +7,13 @@ import argparse
 import json
 import os
 import smtplib
+import ssl
 import sys
 import time
 from dataclasses import dataclass, asdict
 from email.header import Header
 from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -174,20 +176,97 @@ def send_email(body: str) -> None:
     smtp_user = os.getenv("SMTP_USER", "").strip()
     smtp_pass = os.getenv("SMTP_PASS", "").strip()
     sender = os.getenv("EMAIL_FROM", smtp_user).strip()
-    host = os.getenv("SMTP_HOST", "smtp.qq.com").strip()
-    port = int(os.getenv("SMTP_PORT", "465"))
+    host = os.getenv("SMTP_HOST", "").strip() or "smtp.qq.com"
+    port = int(os.getenv("SMTP_PORT", "").strip() or "465")
     if not smtp_user or not smtp_pass or not sender:
         raise RuntimeError("SMTP_USER, SMTP_PASS and EMAIL_FROM must be configured")
     if not RECIPIENT:
         raise RuntimeError("EMAIL_TO must not be empty")
 
     message = MIMEText(body, "plain", "utf-8")
-    message["From"] = Header(sender, "utf-8")
+    # An address must stay an address, rather than an encoded-word header.
+    message["From"] = sender
     message["To"] = RECIPIENT
     message["Subject"] = Header("[ACEM] 博士公告更新", "utf-8")
-    with smtplib.SMTP_SSL(host, port, timeout=30) as smtp:
-        smtp.login(smtp_user, smtp_pass)
-        smtp.sendmail(sender, [RECIPIENT], message.as_string())
+    message["Date"] = formatdate(localtime=True)
+    message["Message-ID"] = make_msgid()
+    payload = message.as_string()
+    context = ssl.create_default_context()
+
+    for attempt in range(1, 4):
+        smtp = None
+        stage = "connect"
+        try:
+            transport = "STARTTLS" if port == 587 else "SSL/TLS"
+            print(f"SMTP attempt {attempt}/3: {host}:{port} ({transport}), connect", flush=True)
+            if port == 587:
+                smtp = smtplib.SMTP(host, port, timeout=30)
+                stage = "STARTTLS"
+                smtp.starttls(context=context)
+            else:
+                smtp = smtplib.SMTP_SSL(host, port, timeout=30, context=context)
+            stage = "greeting"
+            print(f"SMTP stage: {stage}", flush=True)
+            smtp.ehlo_or_helo_if_needed()
+            stage = "login"
+            print(f"SMTP stage: {stage}", flush=True)
+            smtp.login(smtp_user, smtp_pass)
+            stage = "send"
+            print(f"SMTP stage: {stage}", flush=True)
+            smtp.sendmail(sender, [RECIPIENT], payload)
+        except OSError as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, smtplib.SMTPAuthenticationError):
+                raise RuntimeError(
+                    f"SMTP login failed at {host}:{port}: {detail}. "
+                    "For QQ Mail, enable SMTP and use the SMTP authorization code "
+                    "as SMTP_PASS, not the QQ account password."
+                ) from exc
+            transient = isinstance(
+                exc, (smtplib.SMTPServerDisconnected, ConnectionError, TimeoutError)
+            ) or (
+                isinstance(exc, smtplib.SMTPResponseException)
+                and 400 <= exc.smtp_code < 500
+            )
+            if stage != "send" and transient and attempt < 3:
+                # Release the failed connection before waiting to reconnect.
+                if smtp is not None:
+                    smtp.close()
+                    smtp = None
+                delay = 2 ** attempt
+                print(
+                    f"SMTP {stage} failed: {detail}; retrying in {delay}s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(delay)
+                continue
+            hint = (
+                " Delivery status is unknown after a connection loss; "
+                "the snapshot will not be updated."
+                if stage == "send" and isinstance(
+                    exc, (smtplib.SMTPServerDisconnected, ConnectionError, TimeoutError)
+                )
+                else ""
+            )
+            raise RuntimeError(
+                f"SMTP {stage} failed at {host}:{port} "
+                f"(attempt {attempt}/3): {detail}.{hint}"
+            ) from exc
+        else:
+            # Acceptance by sendmail() is success even if QUIT subsequently fails.
+            print("SMTP server accepted the message.", flush=True)
+            try:
+                smtp.quit()
+            except OSError as exc:
+                print(
+                    f"SMTP QUIT failed after message acceptance: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
+            return
+        finally:
+            if smtp is not None:
+                smtp.close()
 
 
 def main() -> int:
