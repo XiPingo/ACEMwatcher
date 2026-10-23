@@ -11,6 +11,8 @@ python -m pip install -r requirements.txt
 python acem.py --dry-run
 ```
 
+`--dry-run` 只打印变化，不发送邮件，也不会更新快照。
+
 正常发送邮件时需要设置以下环境变量：
 
 - `SMTP_USER`: SMTP 登录账号
@@ -19,7 +21,7 @@ python acem.py --dry-run
 - `SMTP_HOST`: SMTP 主机，默认 `smtp.qq.com`
 - `SMTP_PORT`: SMTP SSL 端口，默认 `465`
 
-首次运行只保存快照，不发送邮件；之后发现公告变化才发送通知。快照文件为 `acem_snapshot.json`。
+首次运行会把当前公告作为新增内容发送初始通知，然后保存快照；之后发现公告变化才发送通知。发信失败时不会更新快照。快照文件为 `acem_snapshot.json`。
 
 ## GitHub Actions
 

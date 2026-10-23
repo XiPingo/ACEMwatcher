@@ -117,8 +117,23 @@ def load_snapshot(path: Path = SNAPSHOT_FILE) -> list[Notice]:
 def save_snapshot(notices: list[Notice], path: Path = SNAPSHOT_FILE) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
-        json.dump([asdict(notice) for notice in notices], handle, ensure_ascii=False, indent=2)
+        json.dump(
+            {"version": 2, "notices": [asdict(notice) for notice in notices]},
+            handle,
+            ensure_ascii=False,
+            indent=2,
+        )
         handle.write("\n")
+
+
+def is_legacy_snapshot(path: Path = SNAPSHOT_FILE) -> bool:
+    """Return whether *path* was written by the pre-initial-email format."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data: Any = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+    return isinstance(data, list)
 
 
 def diff_notices(old: list[Notice], new: list[Notice]) -> dict[str, list[Any]]:
@@ -183,13 +198,15 @@ def main() -> int:
     try:
         new_notices = fetch_notices()
         old_notices = load_snapshot()
-        diff = diff_notices(old_notices, new_notices)
+        # A legacy list snapshot was created before initial notifications were
+        # enabled. Treat it as an unnotified baseline so the first upgraded run
+        # sends the current notices once.
+        if is_legacy_snapshot():
+            diff = {"added": new_notices, "removed": [], "changed": []}
+        else:
+            diff = diff_notices(old_notices, new_notices)
         has_changes = any(diff.values())
 
-        if not old_notices:
-            save_snapshot(new_notices)
-            print(f"Saved initial snapshot with {len(new_notices)} notices.")
-            return 0
         if not has_changes:
             print("No ACEM notice changes detected.")
             return 0
@@ -197,9 +214,10 @@ def main() -> int:
         body = format_diff(diff)
         if args.dry_run:
             print(body, end="")
-        else:
-            send_email(body)
-            print(f"Notice update sent to {RECIPIENT}.")
+            return 0
+
+        send_email(body)
+        print(f"Notice update sent to {RECIPIENT}.")
         save_snapshot(new_notices)
         return 0
     except Exception as exc:
