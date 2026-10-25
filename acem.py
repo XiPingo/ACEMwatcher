@@ -31,7 +31,7 @@ URL = "https://acem.sjtu.edu.cn/acem2021/phd/notices.html"
 GS_URL = "https://www.gs.sjtu.edu.cn/"
 YZW_URL = "https://yzb.sjtu.edu.cn/"
 SITES = (
-    (URL, "ACEM PhD admissions", None),
+    (URL, "ACEM 博士通知", None),
     (GS_URL, "研究生院通知公告", "/html/body/div[5]/div[1]/div/div/div[1]"),
     (YZW_URL, "研究生招生网博士招生", "/html/body/div[5]/div[1]/div/div/div[1]"),
     (YZW_URL, "研究生招生网硕士招生", "/html/body/div[5]/div[1]/div/div/div[2]"),
@@ -225,7 +225,7 @@ def diff_notices(old: list[Notice], new: list[Notice]) -> dict[str, list[Any]]:
 
 
 def format_diff(diff: dict[str, list[Any]]) -> str:
-    lines = [f"上海交通大学研究生信息页面发生变化（{time.strftime('%Y-%m-%d %H:%M:%S')}）", ""]
+    lines = [f"SJTU研究生信息页面发生变化（{time.strftime('%Y-%m-%d %H:%M:%S')}）", ""]
     for notice in diff["added"]:
         lines.append(f"新增：[{notice.source}] {notice.title}")
         lines.append(f"日期：{notice.date}" if notice.date else "")
@@ -260,7 +260,7 @@ def send_email(body: str) -> None:
     # An address must stay an address, rather than an encoded-word header.
     message["From"] = sender
     message["To"] = RECIPIENT
-    message["Subject"] = Header("[SJTU] 研究生招生通知更新", "utf-8")
+    message["Subject"] = Header("[SJTU] 研究生通知更新", "utf-8")
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid()
     payload = message.as_string()
