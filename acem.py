@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Monitor the ACEM PhD notice list and notify one mailbox on changes."""
 
 from __future__ import annotations
@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import re
 import smtplib
 import ssl
 import sys
@@ -18,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
+from lxml import html as lxml_html
 import requests
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
@@ -25,6 +28,14 @@ from urllib3.util.retry import Retry
 
 
 URL = "https://acem.sjtu.edu.cn/acem2021/phd/notices.html"
+GS_URL = "https://www.gs.sjtu.edu.cn/"
+YZW_URL = "https://yzb.sjtu.edu.cn/"
+SITES = (
+    (URL, "ACEM PhD admissions", None),
+    (GS_URL, "研究生院通知公告", "/html/body/div[5]/div[1]/div/div/div[1]"),
+    (YZW_URL, "研究生招生网博士招生", "/html/body/div[5]/div[1]/div/div/div[1]"),
+    (YZW_URL, "研究生招生网硕士招生", "/html/body/div[5]/div[1]/div/div/div[2]"),
+)
 SNAPSHOT_FILE = Path(os.getenv("SNAPSHOT_FILE", "acem_snapshot.json"))
 RECIPIENT = os.getenv("EMAIL_TO", "xiangxi@smail.nju.edu.cn").strip()
 USER_AGENT = (
@@ -38,6 +49,7 @@ class Notice:
     title: str
     url: str
     date: str = ""
+    source: str = "ACEM PhD admissions"
 
 
 def build_session() -> requests.Session:
@@ -57,10 +69,60 @@ def build_session() -> requests.Session:
     return session
 
 
-def fetch_notices(url: str = URL, timeout: int = 30) -> list[Notice]:
+def _parse_dated_link(text: str) -> tuple[str, str]:
+    text = " ".join(text.split())
+    match = re.match(
+        r"^(\d{1,2}(?:[./]\d{1,2})?(?:[./]\d{4})?|\d{1,2}\s+20\d{2}(?:[./]\d{1,2})?)\s*[-|：:]?\s*(.+)$",
+        text,
+    )
+    return (match.group(1), match.group(2).strip()) if match else ("", text)
+
+
+def _xpath_notices(document: str, url: str, xpath: str, source: str) -> list[Notice]:
+    tree = lxml_html.fromstring(document)
+    sections = tree.xpath(xpath)
+    if not sections:
+        raise RuntimeError(f"Could not find the {source} section ({xpath})")
+
+    notices: list[Notice] = []
+    seen: set[str] = set()
+    for link in sections[0].xpath(".//a[@href]"):
+        text = " ".join(" ".join(link.itertext()).split()) or (link.get("title") or "").strip()
+        if not text:
+            continue
+        href = urljoin(url, (link.get("href") or "").strip())
+        if not href or href.startswith(("javascript:", "mailto:")) or href in seen:
+            continue
+        seen.add(href)
+        date = ""
+        parent = link.getparent()
+        while parent is not None and parent is not sections[0]:
+            row_text = " ".join(" ".join(parent.itertext()).split())
+            if row_text != text:
+                date, _ = _parse_dated_link(row_text)
+                if date:
+                    break
+            parent = parent.getparent()
+        text_date, title = _parse_dated_link(text)
+        if text_date:
+            date = text_date
+        notices.append(Notice(title=title, url=href, date=date, source=source))
+    if not notices:
+        raise RuntimeError(f"The {source} section was empty")
+    return notices
+
+
+def fetch_site_notices(
+    url: str, timeout: int = 30, *, xpath: str | None = None, source: str | None = None
+) -> list[Notice]:
     response = build_session().get(url, timeout=timeout)
     response.raise_for_status()
     response.encoding = response.apparent_encoding or "utf-8"
+    source = source or url
+    if xpath:
+        return _xpath_notices(response.text, url, xpath, source)
+    if url != URL:
+        raise ValueError(f"Unsupported notice URL: {url}")
     soup = BeautifulSoup(response.text, "lxml")
 
     heading = soup.find(
@@ -84,10 +146,20 @@ def fetch_notices(url: str = URL, timeout: int = 30) -> list[Notice]:
         date_node = item.find(class_=lambda value: value and "time" in value)
         date = date_node.get_text(" ", strip=True) if date_node else ""
         if title and href:
-            notices.append(Notice(title=title, url=href, date=date))
+            notices.append(Notice(title=title, url=href, date=date, source="ACEM PhD admissions"))
 
     if not notices:
         raise RuntimeError("The ACEM notice list was empty")
+    return notices
+
+
+def fetch_notices(url: str | None = None, timeout: int = 30) -> list[Notice]:
+    sites = [site for site in SITES if url is None or site[0] == url]
+    if url is not None and not sites:
+        raise ValueError(f"Unsupported notice URL: {url}")
+    notices: list[Notice] = []
+    for site_url, source, xpath in sites:
+        notices.extend(fetch_site_notices(site_url, timeout, xpath=xpath, source=source))
     return notices
 
 
@@ -111,6 +183,7 @@ def load_snapshot(path: Path = SNAPSHOT_FILE) -> list[Notice]:
                     title=str(item["title"]),
                     url=str(item["url"]),
                     date=str(item.get("date", "")),
+                    source=str(item.get("source", "ACEM PhD admissions")),
                 )
             )
     return notices
@@ -152,23 +225,23 @@ def diff_notices(old: list[Notice], new: list[Notice]) -> dict[str, list[Any]]:
 
 
 def format_diff(diff: dict[str, list[Any]]) -> str:
-    lines = [f"ACEM 博士公告页面发生变化（{time.strftime('%Y-%m-%d %H:%M:%S')}）", ""]
+    lines = [f"上海交通大学研究生信息页面发生变化（{time.strftime('%Y-%m-%d %H:%M:%S')}）", ""]
     for notice in diff["added"]:
-        lines.append(f"新增：{notice.title}")
+        lines.append(f"新增：[{notice.source}] {notice.title}")
         lines.append(f"日期：{notice.date}" if notice.date else "")
         lines.append(f"链接：{notice.url}")
         lines.append("")
     for notice in diff["removed"]:
-        lines.append(f"移除：{notice.title}")
+        lines.append(f"移除：[{notice.source}] {notice.title}")
         lines.append(f"链接：{notice.url}")
         lines.append("")
     for old, new in diff["changed"]:
-        lines.append(f"更新：{old.title} -> {new.title}")
+        lines.append(f"更新：[{new.source}] {old.title} -> {new.title}")
         if new.date:
             lines.append(f"日期：{new.date}")
         lines.append(f"链接：{new.url}")
         lines.append("")
-    lines.append(f"公告页：{URL}")
+    lines.extend([f"通知公告：首页 {GS_URL}", f"招生栏目：首页 {YZW_URL}"])
     return "\n".join(lines).strip() + "\n"
 
 
@@ -187,7 +260,7 @@ def send_email(body: str) -> None:
     # An address must stay an address, rather than an encoded-word header.
     message["From"] = sender
     message["To"] = RECIPIENT
-    message["Subject"] = Header("[ACEM] 博士公告更新", "utf-8")
+    message["Subject"] = Header("[SJTU] 研究生招生通知更新", "utf-8")
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid()
     payload = message.as_string()
