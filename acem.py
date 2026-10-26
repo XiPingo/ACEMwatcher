@@ -127,26 +127,15 @@ def _xpath_notices(document: str, url: str, xpath: str, source: str) -> list[Not
         row_date = ""
         parent = link.getparent()
         while parent is not None:
-            # Compare stable XPath locations: lxml can expose distinct Python
-            # proxies for the same element, so proxy identity is unreliable.
-            is_section = (
-                parent.getroottree().getpath(parent)
-                == sections[0].getroottree().getpath(sections[0])
-            )
-            # Avoid reading a different notice's date from a section that
-            # contains multiple links; a single-link section is itself the
-            # only available row boundary.
-            if not is_section or len(parent.xpath(".//a[@href]")) == 1:
-                row_text = " ".join(" ".join(parent.itertext()).split())
-                if row_text != text:
-                    row_date = _row_date(row_text, text)
-                    if row_date:
-                        break
-            # Some pages select each announcement row directly with the
-            # configured XPath, so the date sibling lives in the section
-            # itself rather than in one of its ancestors.
-            if is_section:
+            # Stop before a container with multiple notices so we cannot
+            # mistake a neighboring notice's date for this link's date.
+            if len(parent.xpath(".//a[@href]")) > 1:
                 break
+            row_text = " ".join(" ".join(parent.itertext()).split())
+            if row_text != text:
+                row_date = _row_date(row_text, text)
+                if row_date:
+                    break
             parent = parent.getparent()
         text_date, title = _parse_dated_link(text)
         date = _merge_dated_link_parts(text_date, row_date)
