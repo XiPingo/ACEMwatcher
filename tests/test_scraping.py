@@ -4,6 +4,52 @@ import acem
 
 
 class XPathNoticeTests(unittest.TestCase):
+    def test_combines_title_year_with_row_date(self):
+        document = """
+        <html><body>
+          <div></div><div></div><div></div><div></div><div>
+            <div><div><div>
+              <div><a href="/gs/1">2026 关于研究生通知</a><span>10.15</span></div>
+            </div></div></div>
+          </div>
+        </body></html>
+        """
+
+        notices = acem._xpath_notices(
+            document,
+            "https://www.gs.sjtu.edu.cn/",
+            "/html/body/div[5]/div[1]/div/div/div[1]",
+            "Graduate school announcements",
+        )
+
+        self.assertEqual(notices[0], acem.Notice(
+            "关于研究生通知",
+            "https://www.gs.sjtu.edu.cn/gs/1",
+            date="2026.10.15",
+            source="Graduate school announcements",
+        ))
+
+    def test_combines_title_year_month_with_row_day(self):
+        document = """
+        <html><body>
+          <div></div><div></div><div></div><div></div><div>
+            <div><div><div>
+              <div><a href="/doctor/1">2026.09 博士招生简章</a><span>06</span></div>
+            </div></div></div>
+          </div>
+        </body></html>
+        """
+
+        notices = acem._xpath_notices(
+            document,
+            "https://yzb.sjtu.edu.cn/",
+            "/html/body/div[5]/div[1]/div/div/div[1]",
+            "Doctor admissions",
+        )
+
+        self.assertEqual(notices[0].date, "2026.09.06")
+        self.assertEqual(notices[0].title, "博士招生简章")
+
     def test_extracts_links_from_each_selected_section(self):
         document = """
         <html><body>

@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 import re
-import re
 import smtplib
 import ssl
 import sys
@@ -72,10 +71,41 @@ def build_session() -> requests.Session:
 def _parse_dated_link(text: str) -> tuple[str, str]:
     text = " ".join(text.split())
     match = re.match(
-        r"^(\d{1,2}(?:[./]\d{1,2})?(?:[./]\d{4})?|\d{1,2}\s+20\d{2}(?:[./]\d{1,2})?)\s*[-|：:]?\s*(.+)$",
+        r"^(20\d{2}(?:[./-]\d{1,2}){0,2}|\d{1,2}(?:[./]\d{1,2})?(?:[./]\d{4})?|\d{1,2}\s+20\d{2}(?:[./]\d{1,2})?)"
+        r"(?=\s+|[-|：:])\s*[-|：:]?\s*(.+)$",
         text,
     )
     return (match.group(1), match.group(2).strip()) if match else ("", text)
+
+
+def _merge_dated_link_parts(title_date: str, row_date: str) -> str:
+    """Combine a date prefix in a title with a date shown in its list row."""
+    if not title_date:
+        return row_date
+    if not row_date:
+        return title_date
+
+    title_parts = re.findall(r"\d+", title_date)
+    row_parts = re.findall(r"\d+", row_date)
+    # These two sites put the year or year/month in the title and the
+    # remaining month/day (or day) in a sibling element.
+    if title_parts and len(title_parts[0]) == 4 and len(title_parts) < 3:
+        if not row_parts or len(row_parts) > 3 or len(row_parts[0]) == 4:
+            return title_date
+        parts = title_parts + row_parts
+        if len(parts) >= 2:
+            parts[1:] = [part.zfill(2) for part in parts[1:]]
+            return ".".join(parts)
+    return title_date
+
+
+def _row_date(row_text: str, link_text: str) -> str:
+    """Extract the date rendered beside a link, excluding the link title."""
+    row_text = " ".join(row_text.split())
+    link_text = " ".join(link_text.split())
+    remainder = row_text.replace(link_text, "", 1).strip()
+    match = re.search(r"(?<!\d)(\d{1,2}(?:[./]\d{1,2})?(?:[./]\d{4})?)(?!\d)", remainder)
+    return match.group(1) if match else ""
 
 
 def _xpath_notices(document: str, url: str, xpath: str, source: str) -> list[Notice]:
@@ -94,18 +124,17 @@ def _xpath_notices(document: str, url: str, xpath: str, source: str) -> list[Not
         if not href or href.startswith(("javascript:", "mailto:")) or href in seen:
             continue
         seen.add(href)
-        date = ""
+        row_date = ""
         parent = link.getparent()
         while parent is not None and parent is not sections[0]:
             row_text = " ".join(" ".join(parent.itertext()).split())
             if row_text != text:
-                date, _ = _parse_dated_link(row_text)
-                if date:
+                row_date = _row_date(row_text, text)
+                if row_date:
                     break
             parent = parent.getparent()
         text_date, title = _parse_dated_link(text)
-        if text_date:
-            date = text_date
+        date = _merge_dated_link_parts(text_date, row_date)
         notices.append(Notice(title=title, url=href, date=date, source=source))
     if not notices:
         raise RuntimeError(f"The {source} section was empty")
