@@ -127,9 +127,12 @@ def _xpath_notices(document: str, url: str, xpath: str, source: str) -> list[Not
         row_date = ""
         parent = link.getparent()
         while parent is not None:
-            # lxml may create a new Python proxy for the same underlying node,
-            # so compare elements by value rather than object identity.
-            is_section = parent == sections[0]
+            # Compare stable XPath locations: lxml can expose distinct Python
+            # proxies for the same element, so proxy identity is unreliable.
+            is_section = (
+                parent.getroottree().getpath(parent)
+                == sections[0].getroottree().getpath(sections[0])
+            )
             # Avoid reading a different notice's date from a section that
             # contains multiple links; a single-link section is itself the
             # only available row boundary.
