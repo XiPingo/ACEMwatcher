@@ -2,7 +2,8 @@ name: Run ACEM Watcher
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # GitHub Actions cron uses UTC; these run at 08:00 and 17:00 Beijing time.
+    - cron: "0 0,9 * * *"
   workflow_dispatch:
 
 permissions:
