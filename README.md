@@ -1,6 +1,6 @@
 # ACEMwatcher
 
-定时检查上海交通大学安泰经济与管理学院博士项目公告页的变化，并在有新增、删除或修改时发送邮件到 `xiangxi@smail.nju.edu.cn`。
+定时检查上海交通大学研招网、研究生院、安泰经济与管理学院博士项目公告页的变化，并在有新增、删除或修改时发送邮件。
 
 监控页面：<https://acem.sjtu.edu.cn/acem2021/phd/notices.html>
 
@@ -25,7 +25,7 @@ python acem.py --dry-run
 
 ## GitHub Actions
 
-工作流每 30 分钟运行一次，也支持手动触发。请在仓库 Secrets 中配置 `SMTP_USER`、`SMTP_PASS` 和 `EMAIL_FROM`。
+工作流每半天运行一次，也支持手动触发。请在仓库 Secrets 中配置 `SMTP_USER`、`SMTP_PASS` 和 `EMAIL_FROM`。
 
 QQ 邮箱需开启 SMTP 服务，`SMTP_USER` 填完整 QQ 邮箱地址，`SMTP_PASS` 填邮箱生成的 SMTP 授权码，`EMAIL_FROM` 建议与 `SMTP_USER` 一致。账号和授权码的首尾空白会自动去除。
 
